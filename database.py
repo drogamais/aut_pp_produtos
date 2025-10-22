@@ -118,6 +118,41 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         df = df[COLUNAS_CSV_NECESSARIAS].fillna('')
         print(f"[Database] CSV lido com sucesso. {len(df)} linhas encontradas. Iniciando processamento...")
 
+        # --- INÍCIO DA CORREÇÃO ---
+        
+        print("[Database] Corrigindo formatos de data (DATA CADASTRO, ULTIMA ALTERAÇÃO)...")
+        try:
+            # 1. Define o formato de entrada (brasileiro)
+            formato_data_br = '%d/%m/%Y %H:%M:%S'
+            
+            # --- Coluna 1: DATA CADASTRO ---
+            # Usa o nome exato da coluna do CSV (maiúsculo)
+            df['DATA CADASTRO'] = pd.to_datetime(df['DATA CADASTRO'], 
+                                                 format=formato_data_br, 
+                                                 errors='coerce')
+            
+            df['DATA CADASTRO'] = df['DATA CADASTRO'].astype(object).where(pd.notnull(df['DATA CADASTRO']), None)
+
+            # --- Coluna 2: ULTIMA ALTERAÇÃO ---
+            # Aplica a mesma lógica para a outra coluna de data
+            df['ULTIMA ALTERAÇÃO'] = pd.to_datetime(df['ULTIMA ALTERAÇÃO'], 
+                                                    format=formato_data_br, 
+                                                    errors='coerce')
+            
+            df['ULTIMA ALTERAÇÃO'] = df['ULTIMA ALTERAÇÃO'].astype(object).where(pd.notnull(df['ULTIMA ALTERAÇÃO']), None)
+
+
+            print("[Database] Formatos de data corrigidos.")
+
+        except KeyError as e:
+            print(f"[Database] ERRO: Não foi possível encontrar a coluna de data {e}. Verifique as COLUNAS_CSV_DADOS.")
+            raise e # Para a execução
+        except Exception as e:
+            print(f"[Database] ERRO ao corrigir formato de data: {e}")
+            raise e # Para a execução
+
+        # --- FIM DA CORREÇÃO ---
+
         # 2. Preparar dados para inserção
         data_to_insert = []
 
@@ -134,7 +169,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
                 
                 # --- NOVO ---
                 # Cria uma tupla com todos os outros dados do produto, já com .strip()
-                dados_produto = tuple(row[col].strip() for col in COLUNAS_CSV_DADOS)
+                dados_produto = tuple(row[col].strip() if isinstance(row[col], str) else row[col] for col in COLUNAS_CSV_DADOS)
                 
                 # 1. Adicionar o código de barras principal (Flag = 1)
                 if cod_principal_raw:
