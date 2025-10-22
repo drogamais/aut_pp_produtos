@@ -81,7 +81,8 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
 
     # Colunas base do DB
     COLUNAS_DB_BASE = [
-        "codigo_interno", 
+        "codigo_interno",
+        "codigo_barras",
         "codigo_barras_normalizado", 
         "codigo_principal"
     ]
@@ -176,8 +177,8 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
                     # Normaliza o principal (zfill + truncate)
                     cod_principal_norm = cod_principal_raw.zfill(14)[:14]
                     
-                    # Monta a tupla final: (cod_interno, cod_barras, flag, ...resto_dos_dados)
-                    tupla_inserir = (cod_interno_trunc, cod_principal_norm, 1) + dados_produto
+                    # Monta a tupla final: (cod_interno, cod_barras_RAW, cod_barras_NORM, flag, ...resto_dos_dados)
+                    tupla_inserir = (cod_interno_trunc, cod_principal_raw, cod_principal_norm, 1) + dados_produto
                     data_to_insert.append(tupla_inserir)
 
                 # 2. Processar e adicionar os códigos de barras adicionais (Flag = 0)
@@ -190,8 +191,8 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
                             # Normaliza o adicional (zfill + truncate)
                             cod_ad_norm = cod_ad_limpo.zfill(14)[:14]
                             
-                            # Monta a tupla final: (cod_interno, cod_barras, flag, ...resto_dos_dados)
-                            tupla_inserir = (cod_interno_trunc, cod_ad_norm, 0) + dados_produto
+                            # Monta a tupla final: (cod_interno, cod_barras_RAW, cod_barras_NORM, flag, ...resto_dos_dados)
+                            tupla_inserir = (cod_interno_trunc, cod_ad_limpo, cod_ad_norm, 0) + dados_produto
                             data_to_insert.append(tupla_inserir)
                 # --- FIM DA MUDANÇA ---
 
@@ -211,6 +212,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         create_query = f"""
         CREATE TABLE {TABELA_DB} (
             codigo_interno VARCHAR(14),
+            codigo_barras VARCHAR(14),
             codigo_barras_normalizado VARCHAR(14),
             codigo_principal TINYINT,
             
