@@ -1,0 +1,16 @@
+{
+  "login": {
+    "url_login": "[https://url.do.login.aqui](https://url.do.login.aqui)",
+    "url_produtos": "[https://url.da.pagina.de.produtos.aqui](https://url.da.pagina.de.produtos.aqui)",
+    "base": "NomeDaBase",
+    "username": "seu_usuario_plugpharma",
+    "password": "sua_senha_plugpharma"
+  },
+  "dbSults": {
+    "host": "ip.do.servidor.mariadb",
+    "porta": 3306,
+    "database": "nome_do_banco",
+    "usuario": "seu_usuario_db",
+    "senha": "sua_senha_db"
+  }
+}

@@ -1,8 +1,7 @@
-# aut_pp_produtos.py
-
 import time
 import os
 import glob
+import argparse # --- 1. IMPORTADO ---
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -14,7 +13,9 @@ from utils import carregar_config
 
 class PlugPharmaAutomator:
     
-    def __init__(self, login_config):
+    # --- 3. ALTERADO ---
+    # Adicionado 'dev_mode=False'
+    def __init__(self, login_config, dev_mode=False): 
         self.config = login_config
         
         # Define o caminho absoluto para a pasta 'downloads' dentro do projeto
@@ -29,15 +30,29 @@ class PlugPharmaAutomator:
         prefs = {"download.default_directory" : self.pasta_downloads}
         options.add_experimental_option("prefs", prefs)
         
+        # --- LÓGICA DO MODO DEV ---
+        if dev_mode:
+            print("[Sistema] MODO DEV ATIVADO. Navegador ficará visível.")
+            # Não faz nada, usa as opções padrões (navegador visível)
+        else:
+            print("[Sistema] MODO PADRÃO (HEADLESS). Navegador ficará oculto.")
+            options.add_argument("--headless=new")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--no-sandbox")
+        # --- FIM DA LÓGICA ---
+            
         self.service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=self.service, options=options)
         
         # Espera padrão (curta) para elementos da UI
         self.wait = WebDriverWait(self.driver, 20) 
         # Espera longa para processamento de servidor e downloads
-        self.wait_long = WebDriverWait(self.driver, 300) # 5 minutos
+        self.wait_long = WebDriverWait(self.driver, 3900) # 65 minutos
         
-        self.driver.maximize_window()
+        if dev_mode:
+            self.driver.maximize_window() # Maximiza APENAS em modo dev
+        # --- FIM DA ALTERAÇÃO 3 ---
 
     def _limpar_pasta_downloads(self):
         """Apaga arquivos .csv e .crdownload antigos da pasta."""
@@ -128,7 +143,7 @@ class PlugPharmaAutomator:
             WebDriverWait(self.driver, 10).until(EC.presence_of_element_located(locator_barra))
             print("[Web] Barra apareceu. Agora aguardando desaparecer (processamento do servidor)...")
             
-            # Usa a espera longa (até 5 min) para a barra DESAPARECER
+            # Usa a espera longa (até 65 min) para a barra DESAPARECER
             self.wait_long.until(EC.invisibility_of_element_located(locator_barra))
             print("[Web] Barra desapareceu. Servidor terminou de processar.")
             return True
@@ -141,50 +156,43 @@ class PlugPharmaAutomator:
             print(f"[Web] Erro ao esperar barra de progresso: {e}")
             return False
 
-    def _monitorar_download_concluido(self, timeout_segundos=300):
+    def _monitorar_download_concluido(self, timeout_segundos=3900): # 65 minutos
         """
-        Espera um .crdownload aparecer e depois desaparecer.
-        Retorna o caminho completo do arquivo .csv baixado.
+        Espera o download ser concluído monitorando a pasta.
+        O download é considerado completo quando um arquivo .csv existe
+        e nenhum arquivo .crdownload está presente.
         """
-        print(f"[Sistema] Monitorando pasta '{self.pasta_downloads}'...")
+        print(f"[Sistema] Monitorando pasta '{self.pasta_downloads}' por até {timeout_segundos}s...")
         
-        # 1. Esperar o arquivo .crdownload aparecer (download iniciar)
-        print("[Sistema] ...esperando download iniciar (procurando .crdownload)...")
-        timeout_inicio = 30 # 30 segundos para o download sequer começar
-        start_time_inicio = time.time()
-        arquivo_cr = None
-        
-        while not arquivo_cr:
-            lista_cr = glob.glob(os.path.join(self.pasta_downloads, "*.crdownload"))
-            if lista_cr:
-                arquivo_cr = lista_cr[0] # Pega o primeiro .crdownload que aparecer
-                break
-            if time.time() - start_time_inicio > timeout_inicio:
-                raise Exception("Timeout: Download não iniciado (nenhum .crdownload apareceu).")
-            time.sleep(0.5)
+        start_time = time.time()
 
-        print(f"[Sistema] Download iniciado: {os.path.basename(arquivo_cr)}")
+        while True:
+            # 1. Verifica o tempo total
+            if time.time() - start_time > timeout_segundos:
+                raise Exception(f"Timeout de {timeout_segundos}s atingido. Download não concluído.")
 
-        # 2. Esperar o arquivo .crdownload desaparecer (download concluir)
-        print("[Sistema] ...download em andamento (esperando .crdownload desaparecer)...")
-        start_time_download = time.time()
-        
-        while os.path.exists(arquivo_cr):
-            if time.time() - start_time_download > timeout_segundos:
-                raise Exception(f"Timeout: Download não concluído (.crdownload não desapareceu a tempo).")
-            time.sleep(1)
+            # 2. Procura os arquivos
+            arquivos_cr = glob.glob(os.path.join(self.pasta_downloads, "*.crdownload"))
+            arquivos_csv = glob.glob(os.path.join(self.pasta_downloads, "*.csv"))
 
-        print("[Sistema] Download concluído!")
+            # 3. Verifica a condição de conclusão
+            # (Temos CSV) E (NÃO temos .crdownload) = Sucesso!
+            if arquivos_csv and not arquivos_cr:
+                print("\n[Sistema] Download concluído!")
+                # Encontra o arquivo .csv mais recente
+                arquivo_recente = max(arquivos_csv, key=os.path.getctime)
+                print(f"[Sistema] Arquivo baixado: {arquivo_recente}")
+                return arquivo_recente
 
-        # 3. Encontrar o arquivo .csv final (que NÃO é .crdownload)
-        # O nome final pode ser diferente do .crdownload (ex: "produtos (1).csv")
-        arquivos_csv = glob.glob(os.path.join(self.pasta_downloads, "*.csv"))
-        if not arquivos_csv:
-            raise Exception("Erro: Download concluído, mas nenhum arquivo .csv foi encontrado.")
-            
-        arquivo_recente = max(arquivos_csv, key=os.path.getctime)
-        print(f"[Sistema] Arquivo baixado: {arquivo_recente}")
-        return arquivo_recente
+            # 4. Se não terminou, informa o status e espera
+            if arquivos_cr:
+                # Se temos .crdownload, o download está em andamento.
+                print(f"[Sistema] ...download em andamento ({os.path.basename(arquivos_cr[0])})...", end="\r")
+            else:
+                # Se não temos CSV nem CR, o download ainda não começou.
+                print("[Sistema] ...aguardando início do download...", end="\r")
+
+            time.sleep(2) # Espera 2 segundos antes de verificar novamente
 
     def fechar_navegador(self):
         print("[Web] Fechando o navegador.")
@@ -219,13 +227,26 @@ class PlugPharmaAutomator:
             self.fechar_navegador()
 
 # --- Bloco de Execução Independente (Modo de Teste) ---
+
+# --- 2. ALTERADO ---
 if __name__ == "__main__":
-    print("--- Executando 'aut_pp_produtos.py' em modo de teste ---")
+    # Configura o leitor de argumentos da linha de comando
+    parser = argparse.ArgumentParser(description="Automação PlugPharma para extração de produtos.")
+    parser.add_argument(
+        "--dev", 
+        action="store_true", 
+        help="Executa o robô em modo visível (não-headless) para depuração."
+    )
+    args = parser.parse_args()
+
+    print("--- Executando 'aut_pp_produtos.py' ---")
     config = carregar_config()
     login_cfg = config.get("login")
     
     if login_cfg:
-        automator = PlugPharmaAutomator(login_cfg)
+        # Passa o argumento 'dev_mode' para a classe
+        # args.dev será True se --dev for usado, ou False caso contrário
+        automator = PlugPharmaAutomator(login_cfg, dev_mode=args.dev) 
         caminho_arquivo_final = automator.executar_extracao()
         
         if caminho_arquivo_final:
@@ -235,3 +256,4 @@ if __name__ == "__main__":
             print("\n[Teste] A extração (download) falhou.")
     else:
         print("[Teste] Erro: Seção 'login' não encontrada no config.json")
+# --- FIM DA ALTERAÇÃO 2 ---

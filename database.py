@@ -5,7 +5,8 @@ import pandas as pd
 import sys
 import os
 import glob
-# from utils import carregar_config # Importado no __main__
+from datetime import datetime # <-- 1. IMPORTADO AQUI
+from utils import carregar_config 
 
 def conectar_db(db_config):
     """
@@ -76,9 +77,6 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         "farmacologico", "data_cadastro", "ultima_alteracao", "associado"
     ]
     
-    # Todas as colunas necessárias do CSV
-    COLUNAS_CSV_NECESSARIAS = COLUNAS_CSV_BASE + COLUNAS_CSV_DADOS
-
     # Colunas base do DB
     COLUNAS_DB_BASE = [
         "codigo_interno",
@@ -86,11 +84,19 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         "codigo_barras_normalizado", 
         "codigo_principal"
     ]
+
+    # Todas as colunas necessárias do CSV
+    COLUNAS_CSV_NECESSARIAS = COLUNAS_CSV_BASE + COLUNAS_CSV_DADOS
     
+    # --- 3. COLUNA ADICIONADA À LISTA ---
     # Todas as colunas do DB
-    COLUNAS_DB_TODAS = COLUNAS_DB_BASE + COLUNAS_DB_DADOS
+    COLUNAS_DB_TODAS = COLUNAS_DB_BASE + COLUNAS_DB_DADOS + ["data_insercao"]
     
     # --- Fim das constantes ---
+
+    # --- 2. PEGAR O TIMESTAMP ATUAL ---
+    # Pega a data/hora atual UMA VEZ para todo o lote
+    agora = datetime.now()
 
     try:
         # 1. Ler e Processar o CSV com Pandas
@@ -119,66 +125,45 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         df = df[COLUNAS_CSV_NECESSARIAS].fillna('')
         print(f"[Database] CSV lido com sucesso. {len(df)} linhas encontradas. Iniciando processamento...")
 
-        # --- INÍCIO DA CORREÇÃO ---
-        
+        # --- CORREÇÃO DE DATAS (Existente) ---
         print("[Database] Corrigindo formatos de data (DATA CADASTRO, ULTIMA ALTERAÇÃO)...")
         try:
-            # 1. Define o formato de entrada (brasileiro)
             formato_data_br = '%d/%m/%Y %H:%M:%S'
-            
-            # --- Coluna 1: DATA CADASTRO ---
-            # Usa o nome exato da coluna do CSV (maiúsculo)
             df['DATA CADASTRO'] = pd.to_datetime(df['DATA CADASTRO'], 
                                                  format=formato_data_br, 
                                                  errors='coerce')
-            
             df['DATA CADASTRO'] = df['DATA CADASTRO'].astype(object).where(pd.notnull(df['DATA CADASTRO']), None)
-
-            # --- Coluna 2: ULTIMA ALTERAÇÃO ---
-            # Aplica a mesma lógica para a outra coluna de data
             df['ULTIMA ALTERAÇÃO'] = pd.to_datetime(df['ULTIMA ALTERAÇÃO'], 
                                                     format=formato_data_br, 
                                                     errors='coerce')
-            
             df['ULTIMA ALTERAÇÃO'] = df['ULTIMA ALTERAÇÃO'].astype(object).where(pd.notnull(df['ULTIMA ALTERAÇÃO']), None)
-
-
             print("[Database] Formatos de data corrigidos.")
-
         except KeyError as e:
             print(f"[Database] ERRO: Não foi possível encontrar a coluna de data {e}. Verifique as COLUNAS_CSV_DADOS.")
-            raise e # Para a execução
+            raise e
         except Exception as e:
             print(f"[Database] ERRO ao corrigir formato de data: {e}")
-            raise e # Para a execução
-
-        # --- FIM DA CORREÇÃO ---
+            raise e
+        # --- FIM DA CORREÇÃO DE DATAS ---
 
         # 2. Preparar dados para inserção
         data_to_insert = []
 
         for _, row in df.iterrows():
-            # Extrai e limpa os dados de código
             cod_interno_raw = row["CODIGO INTERNO"].strip()
             cod_principal_raw = row["CODIGO BARRAS PRINCIPAL"].strip()
             cod_adicional_raw = row["CODIGO BARRAS ADICIONAL"].strip()
 
-            # Processar apenas se o código interno existir
             if cod_interno_raw:
-                # Apenas trunca o código interno (sem zfill)
                 cod_interno_trunc = cod_interno_raw[:14]
-                
-                # --- NOVO ---
-                # Cria uma tupla com todos os outros dados do produto, já com .strip()
                 dados_produto = tuple(row[col].strip() if isinstance(row[col], str) else row[col] for col in COLUNAS_CSV_DADOS)
                 
                 # 1. Adicionar o código de barras principal (Flag = 1)
                 if cod_principal_raw:
-                    # Normaliza o principal (zfill + truncate)
                     cod_principal_norm = cod_principal_raw.zfill(14)[:14]
                     
-                    # Monta a tupla final: (cod_interno, cod_barras_RAW, cod_barras_NORM, flag, ...resto_dos_dados)
-                    tupla_inserir = (cod_interno_trunc, cod_principal_raw, cod_principal_norm, 1) + dados_produto
+                    # --- 4. DADO ADICIONADO À TUPLA ---
+                    tupla_inserir = (cod_interno_trunc, cod_principal_raw, cod_principal_norm, 1) + dados_produto + (agora,)
                     data_to_insert.append(tupla_inserir)
 
                 # 2. Processar e adicionar os códigos de barras adicionais (Flag = 0)
@@ -188,13 +173,11 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
                     for cod_ad in codigos_adicionais_lista:
                         cod_ad_limpo = cod_ad.strip()
                         if cod_ad_limpo:
-                            # Normaliza o adicional (zfill + truncate)
                             cod_ad_norm = cod_ad_limpo.zfill(14)[:14]
                             
-                            # Monta a tupla final: (cod_interno, cod_barras_RAW, cod_barras_NORM, flag, ...resto_dos_dados)
-                            tupla_inserir = (cod_interno_trunc, cod_ad_limpo, cod_ad_norm, 0) + dados_produto
+                            # --- 4. DADO ADICIONADO À TUPLA ---
+                            tupla_inserir = (cod_interno_trunc, cod_ad_limpo, cod_ad_norm, 0) + dados_produto + (agora,)
                             data_to_insert.append(tupla_inserir)
-                # --- FIM DA MUDANÇA ---
 
         if not data_to_insert:
             print("[Database] Nenhum dado válido para inserir após processamento.")
@@ -206,9 +189,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         print(f"[Database] Recriando tabela (DROP/CREATE) '{TABELA_DB}'...")
         cursor.execute(f"DROP TABLE IF EXISTS {TABELA_DB}")
         
-        # --- ALTERAÇÃO AQUI ---
-        # Cria a nova tabela com TODAS as colunas
-        # Usando TEXT para campos longos e VARCHAR para códigos/datas
+        # --- 5. COLUNA ADICIONADA AO SQL ---
         create_query = f"""
         CREATE TABLE {TABELA_DB} (
             codigo_interno VARCHAR(14),
@@ -239,7 +220,9 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
             farmacologico TEXT, 
             data_cadastro DATETIME, 
             ultima_alteracao DATETIME, 
-            associado VARCHAR(255)
+            associado VARCHAR(255),
+
+            data_insercao DATETIME 
         )
         """
         cursor.execute(create_query)
@@ -248,15 +231,9 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         # 4. Inserir no Banco
         print(f"[Database] Preparando para inserir {len(data_to_insert)} registros...")
 
-        # --- ALTERAÇÃO AQUI ---
-        # Monta a query de INSERT dinamicamente
-        
-        # Cria a string "(col1, col2, col3, ...)"
+        # (Esta parte funciona automaticamente por ser dinâmica)
         colunas_sql = ", ".join(COLUNAS_DB_TODAS)
-        
-        # Cria a string "(?, ?, ?, ...)" com o número correto de placeholders
         placeholders_sql = ", ".join(["?"] * len(COLUNAS_DB_TODAS))
-        
         query = f"INSERT INTO {TABELA_DB} ({colunas_sql}) VALUES ({placeholders_sql})"
         
         cursor.executemany(query, data_to_insert)
@@ -285,43 +262,59 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         if 'cursor' in locals():
             cursor.close()
 
-# --- Bloco de Execução Independente (sem alterações) ---
-if __name__ == "__main__":
-    from utils import carregar_config 
-    
-    print("--- Executando 'database.py' em modo de teste ---")
+# --- Função 'processar_csv_para_db' (Sem alterações) ---
+def processar_csv_para_db():
+    """
+    Função principal "chamável" que executa todo o processo do banco de dados.
+    Encontra o CSV mais recente e o insere no banco.
+    """
+    print("--- Executando 'database.py' (processar_csv_para_db) ---")
     
     config = carregar_config()
     db_cfg = config.get("dbSults")
     if not db_cfg:
-        print("[Teste DB] Erro: Configuração 'dbSults' não encontrada no config.json")
-        sys.exit(1)
+        print("[DB] Erro: Configuração 'dbSults' não encontrada no config.json")
+        raise Exception("Configuração 'dbSults' não encontrada no config.json")
 
     pasta_downloads = os.path.join(os.getcwd(), "downloads")
     if not os.path.exists(pasta_downloads):
-        print(f"[Teste DB] Erro: Pasta de downloads não encontrada em '{pasta_downloads}'")
-        sys.exit(1)
+        print(f"[DB] Erro: Pasta de downloads não encontrada em '{pasta_downloads}'")
+        raise Exception(f"Pasta de downloads não encontrada em '{pasta_downloads}'")
         
     arquivos_csv = glob.glob(os.path.join(pasta_downloads, "*.csv"))
     if not arquivos_csv:
-        print(f"[Teste DB] Erro: Nenhum arquivo .csv encontrado na pasta '{pasta_downloads}'")
-        sys.exit(1)
+        print(f"[DB] Erro: Nenhum arquivo .csv encontrado na pasta '{pasta_downloads}'")
+        raise Exception(f"Nenhum arquivo .csv encontrado na pasta '{pasta_downloads}'")
         
     arquivo_recente = max(arquivos_csv, key=os.path.getctime)
-    print(f"[Teste DB] Encontrado arquivo mais recente: {os.path.basename(arquivo_recente)}")
+    print(f"[DB] Encontrado arquivo mais recente: {os.path.basename(arquivo_recente)}")
 
     conexao = None
     try:
         conexao = conectar_db(db_cfg)
         if conexao:
-            print("[Teste DB] Conexão bem-sucedida. Iniciando inserção...")
-            inserir_dados_produtos(conexao, arquivo_recente)
-            print("[Teste DB] Processo de inserção finalizado.")
+            print("[DB] Conexão bem-sucedida. Iniciando inserção...")
+            # Chama a função principal que agora inclui a data_insercao
+            inserir_dados_produtos(conexao, arquivo_recente) 
+            print("[DB] Processo de inserção finalizado.")
         else:
-            print("[Teste DB] Conexão com o banco falhou. Processo abortado.")
+            print("[DB] Conexão com o banco falhou. Processo abortado.")
+            raise Exception("Conexão com o banco de dados falhou.")
             
     except Exception as e:
-        print(f"[Teste DB] Ocorreu um erro inesperado: {e}")
+        print(f"[DB] Ocorreu um erro inesperado: {e}")
+        raise e 
     finally:
         if conexao:
             conexao.close()
+            print("[DB] Conexão fechada.")
+
+# --- Bloco de Execução Independente (Sem alterações) ---
+if __name__ == "__main__":
+    print("--- Executando 'database.py' em modo de teste direto ---")
+    try:
+        processar_csv_para_db()
+        print("[Teste DB] Teste finalizado com sucesso.")
+    except Exception as e:
+        print(f"[Teste DB] Teste falhou: {e}")
+        sys.exit(1)
