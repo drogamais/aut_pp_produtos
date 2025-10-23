@@ -271,10 +271,10 @@ def processar_csv_para_db():
     print("--- Executando 'database.py' (processar_csv_para_db) ---")
     
     config = carregar_config()
-    db_cfg = config.get("dbSults")
+    db_cfg = config.get("dbDrogamais")
     if not db_cfg:
-        print("[DB] Erro: Configuração 'dbSults' não encontrada no config.json")
-        raise Exception("Configuração 'dbSults' não encontrada no config.json")
+        print("[DB] Erro: Configuração 'dbDrogamais' não encontrada no config.json")
+        raise Exception("Configuração 'dbDrogamais' não encontrada no config.json")
 
     pasta_downloads = os.path.join(os.getcwd(), "downloads")
     if not os.path.exists(pasta_downloads):
