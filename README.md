@@ -46,6 +46,10 @@ No Windows (PowerShell/CMD):
 ```bash
 .\venv\Scripts\activate
 ```
+Caso de erro execute esse comando antes de ativar:
+```bash
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+```
 
 ### 3. Instale as Dependências
 
