@@ -1,7 +1,8 @@
 import time
 import os
 import glob
-import argparse # --- 1. IMPORTADO ---
+import argparse
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -200,29 +201,50 @@ class PlugPharmaAutomator:
 
     def executar_extracao(self):
         """
-        Orquestra a automação E o monitoramento do download.
-        Retorna o CAMINHO do arquivo baixado, ou None se falhar.
+        Orquestra a automação, monitora o download E RENOMEIA o arquivo.
+        Retorna o CAMINHO do arquivo RENOMEADO, ou None se falhar.
         """
+        caminho_arquivo_original = None
+        caminho_arquivo_renomeado = None
         try:
             self.fazer_login()
             self.navegar_para_produtos()
-            
-            # Clica para exportar (e limpa a pasta)
+
             sucesso_cliques = self.coletar_dados_produtos()
-            
+
             if sucesso_cliques:
-                # Espera a barra <mat-progress-bar> sumir
                 if self._esperar_processamento_servidor():
-                    # Espera o arquivo .crdownload sumir
-                    caminho_arquivo = self._monitorar_download_concluido()
-                    return caminho_arquivo
-            
-            return None # Retorna None se qualquer etapa falhar
+                    caminho_arquivo_original = self._monitorar_download_concluido()
+
+                    if caminho_arquivo_original:
+                        try:
+                            hoje_str = datetime.now().strftime('%Y-%m-%d')
+                            # --- ALTERAÇÃO AQUI ---
+                            novo_nome = f"{hoje_str}_produtos.csv" # Formato alterado
+                            # --- FIM DA ALTERAÇÃO ---
+                            caminho_arquivo_renomeado = os.path.join(self.pasta_downloads, novo_nome)
+
+                            if os.path.exists(caminho_arquivo_renomeado):
+                                print(f"[Sistema] Removendo arquivo antigo com nome final: {novo_nome}")
+                                os.remove(caminho_arquivo_renomeado)
+
+                            print(f"[Sistema] Renomeando '{os.path.basename(caminho_arquivo_original)}' para '{novo_nome}'...")
+                            os.rename(caminho_arquivo_original, caminho_arquivo_renomeado)
+                            print("[Sistema] Arquivo renomeado com sucesso.")
+                            return caminho_arquivo_renomeado # Retorna o novo caminho
+                        except OSError as e:
+                            print(f"[Sistema] !!! ERRO AO RENOMEAR O ARQUIVO: {e} !!!")
+                            print(f"[Sistema] O arquivo original pode estar em: {caminho_arquivo_original}")
+                            return caminho_arquivo_original
+
+            return None
 
         except Exception as e:
             print(f"\n[Web] Ocorreu um erro fatal durante a automação: {e}")
-            return None 
-        
+            if caminho_arquivo_original and not caminho_arquivo_renomeado:
+                 print(f"[Web] O arquivo pode ter sido baixado em: {caminho_arquivo_original}")
+            return None
+
         finally:
             self.fechar_navegador()
 
