@@ -198,7 +198,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
             codigo_ms VARCHAR(255), portaria TEXT, forma_apresentacao TEXT,
             codigo_unidade_medida VARCHAR(50), fracao VARCHAR(50), substancia_nome TEXT,
             concentracao TEXT, farmacologico TEXT, data_cadastro DATETIME,
-            ultima_alteracao DATETIME, associado VARCHAR(255),
+            ultima_alteracao DATETIME, associado TEXT,
             data_insercao DATETIME,
             INDEX idx_cod_barras_norm (codigo_barras_normalizado),
             INDEX idx_cod_interno (codigo_interno)
