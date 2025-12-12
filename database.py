@@ -202,7 +202,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
             data_insercao DATETIME,
             INDEX idx_cod_barras_norm (codigo_barras_normalizado),
             INDEX idx_cod_interno (codigo_interno)
-        ) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+        ) CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
         """
         create_query_staging = create_query_base.format(table_name=TABELA_STAGING)
         cursor.execute(create_query_staging)
