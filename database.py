@@ -73,7 +73,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         "FARMACOLOGICO", "DATA CADASTRO", "ULTIMA ALTERAÇÃO", "ASSOCIADO"
     ]
     COLUNAS_DB_DADOS = [
-        "descricao", "apresentacao", "status", "codigo_fabricante", "fabricante",
+        "descricao", "apresentacao", "produto", "status", "codigo_fabricante", "fabricante",
         "cnpj_fabricante", "codigo_tipo_produto", "tipo_produto",
         "codigo_grupo_principal", "grupo_principal", "ncm", "ncm_descricao",
         "preco_controlado", "codigo_ms", "portaria", "forma_apresentacao",
@@ -139,43 +139,79 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
 
             if cod_interno_raw:
                 cod_interno_trunc = cod_interno_raw[:14]
-                # Converte explicitamente tipos que podem ser numéricos mas definimos como VARCHAR no DB
-                dados_produto = list(row[col].strip() if isinstance(row[col], str) else row[col] for col in COLUNAS_CSV_DADOS)
-                # Exemplo: Se 'codigo_fabricante' pode vir como número, converte para string
+
+                # Extrair dados base
+                descricao = (row["DESCRIÇÃO"] or "").strip()
+                apresentacao = (row["APRESENTAÇÃO"] or "").strip()
+
+                # Conversão dos outros campos normalmente
+                dados_produto = [
+                    row[col].strip() if isinstance(row[col], str) else row[col]
+                    for col in COLUNAS_CSV_DADOS
+                ]
+
+                # Normalizar colunas numéricas
                 try:
-                    # Encontra os índices das colunas que podem ser problemáticas
                     idx_cod_fab = COLUNAS_CSV_DADOS.index("CODIGO FABRICANTE")
                     idx_cod_tipo = COLUNAS_CSV_DADOS.index("CODIGO TIPO PRODUTO")
                     idx_cod_grupo = COLUNAS_CSV_DADOS.index("CODIGO GRUPO PRINCIPAL")
                     idx_cod_unid = COLUNAS_CSV_DADOS.index("CODIGO UNIDADE MEDIDA")
                     idx_fracao = COLUNAS_CSV_DADOS.index("FRAÇÃO")
 
-                    if dados_produto[idx_cod_fab] is not None: dados_produto[idx_cod_fab] = str(dados_produto[idx_cod_fab])
-                    if dados_produto[idx_cod_tipo] is not None: dados_produto[idx_cod_tipo] = str(dados_produto[idx_cod_tipo])
-                    if dados_produto[idx_cod_grupo] is not None: dados_produto[idx_cod_grupo] = str(dados_produto[idx_cod_grupo])
-                    if dados_produto[idx_cod_unid] is not None: dados_produto[idx_cod_unid] = str(dados_produto[idx_cod_unid])
-                    if dados_produto[idx_fracao] is not None: dados_produto[idx_fracao] = str(dados_produto[idx_fracao])
-                except ValueError:
-                    # Se não encontrar o índice, ignora (coluna pode ter sido removida das constantes)
+                    for idx in [idx_cod_fab, idx_cod_tipo, idx_cod_grupo, idx_cod_unid, idx_fracao]:
+                        if dados_produto[idx] is not None:
+                            dados_produto[idx] = str(dados_produto[idx])
+                except:
                     pass
-                except Exception as e_conv:
-                    print(f"[Database] Aviso: Erro ao converter dado para string na linha com CODIGO INTERNO {cod_interno_raw}: {e_conv}")
 
-                dados_produto = tuple(dados_produto) # Converte de volta para tupla
+                dados_produto = tuple(dados_produto)
 
+                # ---------------------------
+                # CRIAÇÃO DO PRODUTO CONCAT
+                # ---------------------------
+                # Será preenchido dependendo se é principal ou adicional
+                # mas o formato é o mesmo.
+                # ---------------------------
+
+                # PROCESSA CÓDIGO PRINCIPAL
                 if cod_principal_raw:
-                    cod_principal_norm = cod_principal_raw.zfill(14)[:14]
-                    tupla_inserir = (cod_interno_trunc, cod_principal_raw, cod_principal_norm, 1) + dados_produto + (agora,)
+                    cod_norm = cod_principal_raw.zfill(14)[:14]
+                    produto_concat = f"{cod_norm} - {descricao} {apresentacao}"
+
+                    tupla_inserir = (
+                        cod_interno_trunc,              # codigo_interno
+                        cod_principal_raw,              # codigo_barras
+                        cod_norm,                       # codigo_barras_normalizado
+                        1,                              # codigo_principal
+                        descricao,
+                        apresentacao,
+                        produto_concat,                 # <<<<<< AQUI A COLUNA PRODUTO
+                    ) + dados_produto + (agora,)
+
                     data_to_insert.append(tupla_inserir)
 
-                if cod_adicional_raw:
-                    codigos_adicionais_lista = cod_adicional_raw.split('+')
-                    for cod_ad in codigos_adicionais_lista:
-                        cod_ad_limpo = cod_ad.strip()
-                        if cod_ad_limpo:
-                            cod_ad_norm = cod_ad_limpo.zfill(14)[:14]
-                            tupla_inserir = (cod_interno_trunc, cod_ad_limpo, cod_ad_norm, 0) + dados_produto + (agora,)
-                            data_to_insert.append(tupla_inserir)
+        # PROCESSA CÓDIGOS ADICIONAIS
+        if cod_adicional_raw:
+            for cod_ad in cod_adicional_raw.split("+"):
+                cod_ad_limpo = cod_ad.strip()
+                if not cod_ad_limpo:
+                    continue
+
+                cod_norm = cod_ad_limpo.zfill(14)[:14]
+                produto_concat = f"{cod_norm} - {descricao} {apresentacao}"
+
+                tupla_inserir = (
+                    cod_interno_trunc,
+                    cod_ad_limpo,
+                    cod_norm,
+                    0,
+                    descricao,
+                    apresentacao,
+                    produto_concat,             # <<<<<< AQUI TAMBÉM
+                ) + dados_produto + (agora,)
+
+                data_to_insert.append(tupla_inserir)
+
 
         if not data_to_insert:
             print("[Database] Nenhum dado válido para inserir após processamento.")
@@ -190,7 +226,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         CREATE TABLE {{table_name}} (
             codigo_interno VARCHAR(14), codigo_barras VARCHAR(14),
             codigo_barras_normalizado VARCHAR(14), codigo_principal TINYINT,
-            descricao VARCHAR(255), apresentacao VARCHAR(255), status VARCHAR(20),
+            descricao VARCHAR(255), apresentacao VARCHAR(255), PRODUTO VARCHAR(255), status VARCHAR(20),
             codigo_fabricante VARCHAR(50), fabricante TEXT, cnpj_fabricante VARCHAR(20),
             codigo_tipo_produto VARCHAR(50), tipo_produto VARCHAR(255),
             codigo_grupo_principal VARCHAR(50), grupo_principal VARCHAR(255),
@@ -200,6 +236,7 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
             concentracao TEXT, farmacologico TEXT, data_cadastro DATETIME,
             ultima_alteracao DATETIME, associado TEXT,
             data_insercao DATETIME,
+            INDEX idx_PRODUTO (PRODUTO),
             INDEX idx_cod_barras_norm (codigo_barras_normalizado),
             INDEX idx_cod_interno (codigo_interno)
         ) CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
