@@ -50,19 +50,15 @@ def conectar_db(db_config):
         return None
 
 def inserir_dados_produtos(conexao, caminho_arquivo_csv):
-    """
-    Usa uma tabela staging para carregar os dados EM LOTES. Se sucesso,
-    substitui a tabela principal pela staging atomicamente.
-    """
     if not conexao:
         print("[Database] Inserção falhou: conexão está nula.")
         return
 
     TABELA_PRINCIPAL = "bronze_plugpharma_produtos"
     TABELA_STAGING = "bronze_plugpharma_produtos_staging"
-    CHUNK_SIZE = 50000 # <-- Define o tamanho do lote (ajuste se necessário)
+    CHUNK_SIZE = 10000 
 
-    # --- Constantes (sem alterações) ---
+    # --- Constantes ---
     COLUNAS_CSV_BASE = ["CODIGO INTERNO", "CODIGO BARRAS PRINCIPAL", "CODIGO BARRAS ADICIONAL"]
     COLUNAS_CSV_DADOS = [
         "DESCRIÇÃO", "APRESENTAÇÃO", "STATUS", "CODIGO FABRICANTE", "FABRICANTE",
@@ -83,150 +79,80 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
     COLUNAS_DB_BASE = ["codigo_interno", "codigo_barras", "codigo_barras_normalizado", "codigo_principal"]
     COLUNAS_CSV_NECESSARIAS = COLUNAS_CSV_BASE + COLUNAS_CSV_DADOS
     COLUNAS_DB_TODAS = COLUNAS_DB_BASE + COLUNAS_DB_DADOS + ["data_insercao"]
-    # --- Fim Constantes ---
 
     agora = datetime.now()
     cursor = None
 
     try:
-        # 1. Ler e Processar o CSV (sem alterações significativas, apenas melhor fallback de encoding)
         print(f"[Database] Lendo arquivo: {caminho_arquivo_csv}")
         try:
             df = pd.read_csv(caminho_arquivo_csv, sep=';', encoding='utf-8-sig', low_memory=False, dtype=str)
-        except UnicodeDecodeError:
-            print("[Database] Falha ao ler com utf-8-sig. Tentando 'latin-1'...")
-            try:
-                df = pd.read_csv(caminho_arquivo_csv, sep=';', encoding='latin-1', low_memory=False, dtype=str)
-                print("[Database] Leitura com 'latin-1' bem-sucedida.")
-            except Exception as e_latin:
-                print(f"[Database] Erro ao ler o CSV com 'latin-1': {e_latin}")
-                print("[Database] Verifique o encoding do arquivo CSV.")
-                return
-        except Exception as e:
-            print(f"[Database] Erro inesperado ao ler o CSV: {e}")
-            return
-
-        colunas_faltando = [col for col in COLUNAS_CSV_NECESSARIAS if col not in df.columns]
-        if colunas_faltando:
-            print(f"[Database] Erro: Colunas obrigatórias não encontradas no CSV: {colunas_faltando}")
-            return
+        except:
+            df = pd.read_csv(caminho_arquivo_csv, sep=';', encoding='latin-1', low_memory=False, dtype=str)
 
         df = df[COLUNAS_CSV_NECESSARIAS].fillna('')
-        print(f"[Database] CSV lido. {len(df)} linhas. Processando...")
+        
+        # Correção de datas
+        formato_data_br = '%d/%m/%Y %H:%M:%S'
+        df['DATA CADASTRO'] = pd.to_datetime(df['DATA CADASTRO'], format=formato_data_br, errors='coerce')
+        df['ULTIMA ALTERAÇÃO'] = pd.to_datetime(df['ULTIMA ALTERAÇÃO'], format=formato_data_br, errors='coerce')
 
-        # Correção de datas (sem alterações)
-        print("[Database] Corrigindo formatos de data...")
-        try:
-             formato_data_br = '%d/%m/%Y %H:%M:%S'
-             df['DATA CADASTRO'] = pd.to_datetime(df['DATA CADASTRO'], format=formato_data_br, errors='coerce')
-             df['DATA CADASTRO'] = df['DATA CADASTRO'].astype(object).where(pd.notnull(df['DATA CADASTRO']), None)
-             df['ULTIMA ALTERAÇÃO'] = pd.to_datetime(df['ULTIMA ALTERAÇÃO'], format=formato_data_br, errors='coerce')
-             df['ULTIMA ALTERAÇÃO'] = df['ULTIMA ALTERAÇÃO'].astype(object).where(pd.notnull(df['ULTIMA ALTERAÇÃO']), None)
-             print("[Database] Formatos de data corrigidos.")
-        except Exception as e:
-             print(f"[Database] AVISO ao corrigir formato de data: {e}")
-             if 'DATA CADASTRO' in df.columns: df['DATA CADASTRO'] = None
-             if 'ULTIMA ALTERAÇÃO' in df.columns: df['ULTIMA ALTERAÇÃO'] = None
-             print("[Database] Colunas de data problemáticas foram definidas como NULL.")
-
-        # Preparar dados para inserção (sem alterações)
         data_to_insert = []
-        # ... (loop for _, row in df.iterrows(): ... igual ao código anterior) ...
         for _, row in df.iterrows():
             cod_interno_raw = row["CODIGO INTERNO"].strip()
             cod_principal_raw = row["CODIGO BARRAS PRINCIPAL"].strip()
             cod_adicional_raw = row["CODIGO BARRAS ADICIONAL"].strip()
 
-            if cod_interno_raw:
-                cod_interno_trunc = cod_interno_raw[:14]
+            if not cod_interno_raw: continue
 
-                # Extrair dados base
-                descricao = (row["DESCRIÇÃO"] or "").strip()
-                apresentacao = (row["APRESENTAÇÃO"] or "").strip()
+            cod_interno_trunc = cod_interno_raw[:14]
+            descricao = (row["DESCRIÇÃO"] or "").strip()
+            apresentacao = (row["APRESENTAÇÃO"] or "").strip()
 
-                # Conversão dos outros campos normalmente
-                dados_produto = [
-                    row[col].strip() if isinstance(row[col], str) else row[col]
-                    for col in COLUNAS_CSV_DADOS
-                ]
+            # Extraímos os dados que batem com as colunas do DB_DADOS (menos a coluna 'produto' que será injetada)
+            dados_base_csv = [
+                row[col].strip() if isinstance(row[col], str) else row[col]
+                for col in COLUNAS_CSV_DADOS
+            ]
 
-                # Normalizar colunas numéricas
-                try:
-                    idx_cod_fab = COLUNAS_CSV_DADOS.index("CODIGO FABRICANTE")
-                    idx_cod_tipo = COLUNAS_CSV_DADOS.index("CODIGO TIPO PRODUTO")
-                    idx_cod_grupo = COLUNAS_CSV_DADOS.index("CODIGO GRUPO PRINCIPAL")
-                    idx_cod_unid = COLUNAS_CSV_DADOS.index("CODIGO UNIDADE MEDIDA")
-                    idx_fracao = COLUNAS_CSV_DADOS.index("FRAÇÃO")
+            # --- PROCESSA CÓDIGO PRINCIPAL ---
+            if cod_principal_raw:
+                cod_norm = cod_principal_raw.zfill(14)[:14]
+                prod_concat = f"{cod_norm} - {descricao} {apresentacao}"
+                
+                lista_val = dados_base_csv.copy()
+                lista_val.insert(2, prod_concat) # Injeta na posição da coluna 'produto'
 
-                    for idx in [idx_cod_fab, idx_cod_tipo, idx_cod_grupo, idx_cod_unid, idx_fracao]:
-                        if dados_produto[idx] is not None:
-                            dados_produto[idx] = str(dados_produto[idx])
-                except:
-                    pass
+                tupla = (cod_interno_trunc, cod_principal_raw, cod_norm, 1) + tuple(lista_val) + (agora,)
+                data_to_insert.append(tupla)
 
-                dados_produto = tuple(dados_produto)
+            # --- PROCESSA CÓDIGOS ADICIONAIS ---
+            if cod_adicional_raw:
+                for cod_ad in cod_adicional_raw.split("+"):
+                    cod_ad_limpo = cod_ad.strip()
+                    if not cod_ad_limpo: continue
+                    
+                    cod_norm_ad = cod_ad_limpo.zfill(14)[:14]
+                    prod_concat_ad = f"{cod_norm_ad} - {descricao} {apresentacao}"
+                    
+                    lista_val_ad = dados_base_csv.copy()
+                    lista_val_ad.insert(2, prod_concat_ad)
 
-                # ---------------------------
-                # CRIAÇÃO DO PRODUTO CONCAT
-                # ---------------------------
-                # Será preenchido dependendo se é principal ou adicional
-                # mas o formato é o mesmo.
-                # ---------------------------
-
-                # PROCESSA CÓDIGO PRINCIPAL
-                if cod_principal_raw:
-                    cod_norm = cod_principal_raw.zfill(14)[:14]
-                    produto_concat = f"{cod_norm} - {descricao} {apresentacao}"
-
-                    tupla_inserir = (
-                        cod_interno_trunc,              # codigo_interno
-                        cod_principal_raw,              # codigo_barras
-                        cod_norm,                       # codigo_barras_normalizado
-                        1,                              # codigo_principal
-                        descricao,
-                        apresentacao,
-                        produto_concat,                 # <<<<<< AQUI A COLUNA PRODUTO
-                    ) + dados_produto + (agora,)
-
-                    data_to_insert.append(tupla_inserir)
-
-        # PROCESSA CÓDIGOS ADICIONAIS
-        if cod_adicional_raw:
-            for cod_ad in cod_adicional_raw.split("+"):
-                cod_ad_limpo = cod_ad.strip()
-                if not cod_ad_limpo:
-                    continue
-
-                cod_norm = cod_ad_limpo.zfill(14)[:14]
-                produto_concat = f"{cod_norm} - {descricao} {apresentacao}"
-
-                tupla_inserir = (
-                    cod_interno_trunc,
-                    cod_ad_limpo,
-                    cod_norm,
-                    0,
-                    descricao,
-                    apresentacao,
-                    produto_concat,             # <<<<<< AQUI TAMBÉM
-                ) + dados_produto + (agora,)
-
-                data_to_insert.append(tupla_inserir)
-
+                    tupla_ad = (cod_interno_trunc, cod_ad_limpo, cod_norm_ad, 0) + tuple(lista_val_ad) + (agora,)
+                    data_to_insert.append(tupla_ad)
 
         if not data_to_insert:
-            print("[Database] Nenhum dado válido para inserir após processamento.")
+            print("[Database] Nenhum dado para inserir.")
             return
 
-        # 2. Preparar o Banco (Staging - sem alterações na estrutura)
         cursor = conexao.cursor()
-        print(f"[Database] Criando/Limpando tabela staging '{TABELA_STAGING}'...")
         cursor.execute(f"DROP TABLE IF EXISTS {TABELA_STAGING}")
 
-        create_query_base = f"""
-        CREATE TABLE {{table_name}} (
+        create_query = f"""
+        CREATE TABLE {TABELA_STAGING} (
             codigo_interno VARCHAR(14), codigo_barras VARCHAR(14),
             codigo_barras_normalizado VARCHAR(14), codigo_principal TINYINT,
-            descricao VARCHAR(255), apresentacao VARCHAR(255), PRODUTO VARCHAR(255), status VARCHAR(20),
+            descricao VARCHAR(255), apresentacao VARCHAR(255), produto VARCHAR(255), status VARCHAR(20),
             codigo_fabricante VARCHAR(50), fabricante TEXT, cnpj_fabricante VARCHAR(20),
             codigo_tipo_produto VARCHAR(50), tipo_produto VARCHAR(255),
             codigo_grupo_principal VARCHAR(50), grupo_principal VARCHAR(255),
@@ -236,88 +162,32 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
             concentracao TEXT, farmacologico TEXT, data_cadastro DATETIME,
             ultima_alteracao DATETIME, associado TEXT,
             data_insercao DATETIME,
-            INDEX idx_PRODUTO (PRODUTO),
+            INDEX idx_produto (produto),
             INDEX idx_cod_barras_norm (codigo_barras_normalizado),
             INDEX idx_cod_interno (codigo_interno)
-        ) CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+        ) CHARSET=utf8mb4;
         """
-        create_query_staging = create_query_base.format(table_name=TABELA_STAGING)
-        cursor.execute(create_query_staging)
-        print("[Database] Tabela staging criada com sucesso.")
+        cursor.execute(create_query)
 
-        print(f"[Database] Preparando para inserir {len(data_to_insert)} registros em lotes de {CHUNK_SIZE}...")
         colunas_sql = ", ".join(COLUNAS_DB_TODAS)
-        placeholders_sql = ", ".join(["?"] * len(COLUNAS_DB_TODAS))
-        query = f"INSERT INTO {TABELA_STAGING} ({colunas_sql}) VALUES ({placeholders_sql})"
+        placeholders = ", ".join(["?"] * 30)
+        query = f"INSERT INTO {TABELA_STAGING} ({colunas_sql}) VALUES ({placeholders})"
 
-        total_inserido = 0
-        num_lotes = (len(data_to_insert) + CHUNK_SIZE - 1) // CHUNK_SIZE
         for i in range(0, len(data_to_insert), CHUNK_SIZE):
             batch = data_to_insert[i:i + CHUNK_SIZE]
-            lote_num = (i // CHUNK_SIZE) + 1
-            print(f"[Database] Inserindo lote {lote_num}/{num_lotes} ({len(batch)} registros) na staging...")
             cursor.executemany(query, batch)
-            total_inserido += len(batch) # ou cursor.rowcount se executemany retornar corretamente
-            print(f"[Database] Lote {lote_num} inserido. Total parcial: {total_inserido}")
+            print(f"[Database] Inserido lote {(i//CHUNK_SIZE)+1}")
 
-        # Verifica se o total inserido bate com o esperado
-        if total_inserido != len(data_to_insert):
-             # Isso não deveria acontecer com executemany, mas é uma checagem
-             raise Exception(f"Erro na contagem de inserção! Esperado: {len(data_to_insert)}, Inserido: {total_inserido}")
-
-        print(f"[Database] Inserção em lotes na staging concluída ({total_inserido} registros).")
-        
-
-        print("[Database] Iniciando transação para substituir a tabela principal...")
-        sql_drop_principal = f"DROP TABLE IF EXISTS {TABELA_PRINCIPAL};"
-        sql_rename_staging = f"RENAME TABLE {TABELA_STAGING} TO {TABELA_PRINCIPAL};"
-
-        cursor.execute(sql_drop_principal)
-        print(f"[Database] Tabela principal antiga ('{TABELA_PRINCIPAL}') removida (se existia).")
-        cursor.execute(sql_rename_staging)
-        print(f"[Database] Tabela staging renomeada para principal ('{TABELA_PRINCIPAL}').")
-        
-
-        # Commita a transação (inserção em lotes + renames)
+        cursor.execute(f"DROP TABLE IF EXISTS {TABELA_PRINCIPAL}")
+        cursor.execute(f"RENAME TABLE {TABELA_STAGING} TO {TABELA_PRINCIPAL}")
         conexao.commit()
-        print("[Database] Transação concluída e commit realizado com sucesso!")
+        print("[Database] Sucesso total!")
 
-    # --- Blocos except e finally (sem alterações significativas) ---
-    except pd.errors.EmptyDataError:
-        print(f"[Database] Erro: O arquivo CSV está vazio: {caminho_arquivo_csv}")
-    except mariadb.Error as e:
-        print(f"[Database] !!! ERRO DE BANCO DE DADOS: {e} !!!")
-        try:
-            print("[Database] Tentando reverter (rollback)...")
-            conexao.rollback()
-            print("[Database] Rollback realizado.")
-            if cursor:
-                 print(f"[Database] Tentando limpar tabela staging '{TABELA_STAGING}'...")
-                 cursor.execute(f"DROP TABLE IF EXISTS {TABELA_STAGING}")
-                 conexao.commit()
-                 print("[Database] Tabela staging removida.")
-        except mariadb.Error as rb_e:
-            print(f"[Database] Erro durante o rollback ou limpeza: {rb_e}")
     except Exception as e:
-        print(f"[Database] !!! ERRO INESPERADO: {e} !!!")
-        # Imprime traceback para depuração
-        import traceback
-        traceback.print_exc()
-        if conexao:
-            try:
-                print("[Database] Tentando reverter (rollback)...")
-                conexao.rollback()
-                print("[Database] Rollback realizado.")
-                if cursor:
-                     print(f"[Database] Tentando limpar tabela staging '{TABELA_STAGING}'...")
-                     cursor.execute(f"DROP TABLE IF EXISTS {TABELA_STAGING}")
-                     conexao.commit()
-                     print("[Database] Tabela staging removida.")
-            except mariadb.Error as rb_e:
-                print(f"[Database] Erro durante o rollback ou limpeza: {rb_e}")
+        print(f"[Database] Erro: {e}")
+        if conexao: conexao.rollback()
     finally:
-        if cursor:
-            cursor.close()
+        if cursor: cursor.close()
 
 
 # --- Função 'processar_csv_para_db' (sem alterações) ---
