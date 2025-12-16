@@ -109,7 +109,6 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
             descricao = (row["DESCRIÇÃO"] or "").strip()
             apresentacao = (row["APRESENTAÇÃO"] or "").strip()
 
-            # Extraímos os dados que batem com as colunas do DB_DADOS (menos a coluna 'produto' que será injetada)
             dados_base_csv = [
                 row[col].strip() if isinstance(row[col], str) else row[col]
                 for col in COLUNAS_CSV_DADOS
@@ -118,10 +117,11 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
             # --- PROCESSA CÓDIGO PRINCIPAL ---
             if cod_principal_raw:
                 cod_norm = cod_principal_raw.zfill(14)[:14]
-                prod_concat = f"{cod_norm} - {descricao} {apresentacao}"
+                # AJUSTE: Usando cod_principal_raw em vez de cod_norm
+                prod_concat = f"{cod_principal_raw} - {descricao} {apresentacao}"
                 
                 lista_val = dados_base_csv.copy()
-                lista_val.insert(2, prod_concat) # Injeta na posição da coluna 'produto'
+                lista_val.insert(2, prod_concat) 
 
                 tupla = (cod_interno_trunc, cod_principal_raw, cod_norm, 1) + tuple(lista_val) + (agora,)
                 data_to_insert.append(tupla)
@@ -133,7 +133,8 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
                     if not cod_ad_limpo: continue
                     
                     cod_norm_ad = cod_ad_limpo.zfill(14)[:14]
-                    prod_concat_ad = f"{cod_norm_ad} - {descricao} {apresentacao}"
+                    # AJUSTE: Usando cod_ad_limpo em vez de cod_norm_ad
+                    prod_concat_ad = f"{cod_ad_limpo} - {descricao} {apresentacao}"
                     
                     lista_val_ad = dados_base_csv.copy()
                     lista_val_ad.insert(2, prod_concat_ad)
