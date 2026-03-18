@@ -54,8 +54,8 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
         print("[Database] Inserção falhou: conexão está nula.")
         return
 
-    TABELA_PRINCIPAL = "bronze_plugpharma_produtos"
-    TABELA_STAGING = "bronze_plugpharma_produtos_staging"
+    TABELA_PRINCIPAL = "dim_plugpharma_produtos"
+    TABELA_STAGING = "dim_plugpharma_produtos_staging"
     CHUNK_SIZE = 10000 
 
     # --- Constantes ---
@@ -195,10 +195,10 @@ def inserir_dados_produtos(conexao, caminho_arquivo_csv):
 def processar_csv_para_db(caminho_arquivo_csv_a_processar):
     print(f"--- Executando 'database.py' (processar_csv_para_db) para o arquivo: {os.path.basename(caminho_arquivo_csv_a_processar)} ---")
     config = carregar_config()
-    db_cfg = config.get("dbDrogamais")
+    db_cfg = config.get("drogamais")
     if not db_cfg:
-        print("[DB] Erro: Configuração 'dbDrogamais' não encontrada no config.json")
-        raise Exception("Configuração 'dbDrogamais' não encontrada no config.json")
+        print("[DB] Erro: Configuração 'drogamais' não encontrada no config.json")
+        raise Exception("Configuração 'drogamais' não encontrada no config.json")
 
     conexao = None
     try:
